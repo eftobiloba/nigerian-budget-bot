@@ -24,14 +24,21 @@ Your responsibilities:
 
 Always be professional, accurate, and helpful. If you don't have specific information, acknowledge it and provide general context about where that information can be found.`
 
+    const groundingTool = {
+      googleSearch: {},
+    };
+
+    const config = {
+      tools: [groundingTool],
+      systemInstruction: systemPrompt
+    };
+
     const client = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
 
     const response = await client.models.generateContent({
       model: "gemini-2.5-flash",
       contents: message,
-      config: {
-        systemInstruction: systemPrompt,
-      },
+      config,
     });
 
     const text = response.text
