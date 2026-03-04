@@ -1,13 +1,25 @@
 import { GoogleGenAI } from "@google/genai"
+import { getConversationHistory, formatMessagesForGemini, storeMessage } from "@/lib/conversationService"
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "GEMINI_API_KEY"
 
 export async function POST(request: Request) {
   try {
-    const { message, uploadedFile } = await request.json()
+    const { message, uploadedFile, userID } = await request.json()
 
     if (!message) {
       return Response.json({ error: "Message is required" }, { status: 400 })
+    }
+
+    if (!userID) {
+      return Response.json({ error: "User ID is required" }, { status: 400 })
+    }
+
+    // Store user message in Firestore
+    try {
+      await storeMessage(userID, "user", message, uploadedFile)
+    } catch (error) {
+      console.warn("Failed to store user message:", error)
     }
 
     const systemPrompt = `You are the Nigerian Budget Bot, an expert AI assistant specializing in Nigerian government budgets and financial information from the Nigerian open system.
@@ -26,26 +38,42 @@ Always be professional, accurate, and helpful. If you don't have specific inform
 
     const groundingTool = {
       googleSearch: {},
-    };
+    }
+
+    // Get conversation history
+    const conversationHistory = await getConversationHistory(userID)
+    const messagesForGemini = formatMessagesForGemini(conversationHistory)
+
+    // Add current user message
+    messagesForGemini.push({
+      role: "user",
+      parts: [{ text: message }],
+    })
 
     const config = {
       tools: [groundingTool],
-      systemInstruction: systemPrompt
-    };
+      systemInstruction: systemPrompt,
+    }
 
     const client = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
 
+    // Generate response
     const response = await client.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: message,
+      contents: messagesForGemini,
       config,
-    });
-
-    const text = response.text
-
-    return Response.json({
-      content: text,
     })
+
+    const assistantContent = response.text || "No response generated"
+
+    // Store the complete assistant message in Firestore
+    try {
+      await storeMessage(userID, "assistant", assistantContent, uploadedFile)
+    } catch (error) {
+      console.warn("Failed to store assistant message:", error)
+    }
+
+    return Response.json({ content: assistantContent })
   } catch (error) {
     console.error("[API Error]:", error)
     return Response.json({ error: "Failed to process request" }, { status: 500 })
