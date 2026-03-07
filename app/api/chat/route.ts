@@ -1,25 +1,13 @@
 import { GoogleGenAI } from "@google/genai"
-import { getConversationHistory, formatMessagesForGemini, storeMessage } from "@/lib/conversationService"
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "GEMINI_API_KEY"
 
 export async function POST(request: Request) {
   try {
-    const { message, uploadedFile, userID } = await request.json()
+    const { message, uploadedFile, history } = await request.json()
 
     if (!message) {
       return Response.json({ error: "Message is required" }, { status: 400 })
-    }
-
-    if (!userID) {
-      return Response.json({ error: "User ID is required" }, { status: 400 })
-    }
-
-    // Store user message in Firestore
-    try {
-      await storeMessage(userID, "user", message, uploadedFile)
-    } catch (error) {
-      console.warn("Failed to store user message:", error)
     }
 
     const systemPrompt = `You are the Nigerian Budget Bot, an expert AI assistant specializing in Nigerian government budgets and financial information from the Nigerian open system.
@@ -36,19 +24,15 @@ Your responsibilities:
 
 Always be professional, accurate, and helpful. If you don't have specific information, acknowledge it and provide general context about where that information can be found.`
 
-    const groundingTool = {
-      googleSearch: {},
-    }
+    const groundingTool = { googleSearch: {} }
 
-    // Get conversation history
-    const conversationHistory = await getConversationHistory(userID)
-    const messagesForGemini = formatMessagesForGemini(conversationHistory)
+    // Build Gemini messages from provided history (client-side localStorage)
+    const messagesForGemini = Array.isArray(history)
+      ? history.map((m: any) => ({ role: m.role === "user" ? "user" : "model", parts: [{ text: m.content }] }))
+      : []
 
     // Add current user message
-    messagesForGemini.push({
-      role: "user",
-      parts: [{ text: message }],
-    })
+    messagesForGemini.push({ role: "user", parts: [{ text: message }] })
 
     const config = {
       tools: [groundingTool],
@@ -65,13 +49,6 @@ Always be professional, accurate, and helpful. If you don't have specific inform
     })
 
     const assistantContent = response.text || "No response generated"
-
-    // Store the complete assistant message in Firestore
-    try {
-      await storeMessage(userID, "assistant", assistantContent, uploadedFile)
-    } catch (error) {
-      console.warn("Failed to store assistant message:", error)
-    }
 
     return Response.json({ content: assistantContent })
   } catch (error) {

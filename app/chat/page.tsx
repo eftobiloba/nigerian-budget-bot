@@ -10,10 +10,7 @@ import { Input } from "@/components/ui/input"
 import ChatMessage from "@/components/chat-message"
 import FileUploadArea from "@/components/file-upload-area"
 import { Spinner } from "@/components/ui/spinner"
-import { useAuth } from "@/context/AuthContext"
 import { toast } from "sonner"
-import { LogOut } from "lucide-react"
-import { getConversationHistory } from "@/lib/conversationService"
 
 interface Message {
   id: string
@@ -23,8 +20,6 @@ interface Message {
 }
 
 export default function ChatPage() {
-  const { user, loading, logOut } = useAuth()
-  const router = useRouter()
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
@@ -41,44 +36,6 @@ export default function ChatPage() {
   const [showSurveyButton, setShowSurveyButton] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-
-  // Redirect to auth if not logged in
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push("/auth")
-    }
-  }, [user, loading, router])
-
-  // Load conversation history when user is authenticated
-  useEffect(() => {
-    if (user?.uid) {
-      const loadConversationHistory = async () => {
-        try {
-          const history = await getConversationHistory(user.uid, 50)
-          if (history.length > 0) {
-            // Convert stored messages to Message format and prepend the greeting
-            const loadedMessages: Message[] = history.map((msg) => ({
-              id: msg.id || Math.random().toString(),
-              role: msg.role,
-              content: msg.content,
-              timestamp: msg.timestamp instanceof Date ? msg.timestamp : msg.timestamp.toDate(),
-            }))
-            // Keep the greeting message as the first message if there's no history
-            setMessages((prev) => {
-              // Only replace if we have loaded messages
-              if (loadedMessages.length > 0) {
-                return loadedMessages
-              }
-              return prev
-            })
-          }
-        } catch (error) {
-          console.error("Error loading conversation history:", error)
-        }
-      }
-      loadConversationHistory()
-    }
-  }, [user?.uid])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -107,7 +64,7 @@ export default function ChatPage() {
   }
 
   const sendMessage = async () => {
-    if (!input.trim() || !user?.uid) return
+    if (!input.trim()) return
 
     const userMessage: Message = {
       id: Math.random().toString(),
@@ -116,26 +73,26 @@ export default function ChatPage() {
       timestamp: new Date(),
     }
 
-    setMessages((prev) => [...prev, userMessage])
+    const newMessagesAfterUser = [...messages, userMessage]
+    setMessages(newMessagesAfterUser)
+    try {
+      localStorage.setItem("nbb_conversation", JSON.stringify(newMessagesAfterUser))
+    } catch (e) {
+      console.warn("Failed to save conversation locally:", e)
+    }
+
     setInput("")
     setIsLoading(true)
 
     try {
+      const history = newMessagesAfterUser.map((m) => ({ role: m.role, content: m.content }))
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          userID: user.uid,
-          message: input,
-          uploadedFile: uploadedFileName,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: input, uploadedFile: uploadedFileName, history }),
       })
 
-      if (!response.ok) {
-        throw new Error("Failed to get response")
-      }
+      if (!response.ok) throw new Error("Failed to get response")
 
       const data = await response.json()
 
@@ -146,7 +103,13 @@ export default function ChatPage() {
         timestamp: new Date(),
       }
 
-      setMessages((prev) => [...prev, assistantMessage])
+      const newMessages = [...newMessagesAfterUser, assistantMessage]
+      setMessages(newMessages)
+      try {
+        localStorage.setItem("nbb_conversation", JSON.stringify(newMessages))
+      } catch (e) {
+        console.warn("Failed to save conversation locally:", e)
+      }
       setShowSurveyButton(true)
     } catch (error) {
       console.error("[v0] Error:", error)
@@ -157,19 +120,15 @@ export default function ChatPage() {
         content: "Sorry, I encountered an error. Please try again.",
         timestamp: new Date(),
       }
-      setMessages((prev) => [...prev, errorMessage])
+      const newMessages = [...newMessagesAfterUser, errorMessage]
+      setMessages(newMessages)
+      try {
+        localStorage.setItem("nbb_conversation", JSON.stringify(newMessages))
+      } catch (e) {
+        console.warn("Failed to save conversation locally:", e)
+      }
     } finally {
       setIsLoading(false)
-    }
-  }
-
-  const handleLogOut = async () => {
-    try {
-      await logOut()
-      toast.success("Logged out successfully")
-      router.push("/auth")
-    } catch (error) {
-      toast.error("Failed to log out")
     }
   }
 
@@ -180,18 +139,6 @@ export default function ChatPage() {
     } else {
       toast.error("Survey URL not configured")
     }
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
-        <Spinner />
-      </div>
-    )
-  }
-
-  if (!user) {
-    return null
   }
 
   return (
@@ -210,9 +157,6 @@ export default function ChatPage() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <div className="text-right hidden sm:block">
-                <p className="text-sm font-medium text-foreground">{user.email}</p>
-              </div>
               <button
                 onClick={() => setShowUploadModal(true)}
                 className="p-2 rounded-lg hover:bg-accent/10 transition-colors text-muted-foreground hover:text-accent"
@@ -222,14 +166,6 @@ export default function ChatPage() {
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
-              </button>
-              <button
-                onClick={handleLogOut}
-                className="p-2 rounded-lg hover:bg-red-100 transition-colors text-muted-foreground hover:text-red-600"
-                aria-label="Sign out"
-                title="Sign out"
-              >
-                <LogOut className="w-6 h-6" />
               </button>
             </div>
           </div>
